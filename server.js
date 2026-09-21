@@ -1,72 +1,96 @@
-const express = require('express');
+const express = require("express");
 
-(async () => {
-    const { TikTokLiveConnection, WebcastEvent } =
-        await import('tiktok-live-connector');
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-    const app = express();
-    const PORT = 3000;
+const TIKTOK_USERNAME = "affetmior";
 
-    const TIKTOK_USERNAME = 'affetmior';
+let messageQueue = [];
 
-    let messageQueue = [];
+async function startTikTok() {
+    try {
+        const TikTokModule = await import("tiktok-live-connector");
 
-    const tiktok = new TikTokLiveConnection(TIKTOK_USERNAME, {
-        processInitialData: true
-    });
+        console.log("TikTok module exports:", Object.keys(TikTokModule));
 
-    tiktok.connect()
-        .then(state => {
-            console.log('TikTok Live bağlantısı başarılı!');
-            console.log('Room ID:', state.roomId);
-        })
-        .catch(err => {
-            console.error('TikTok bağlantı hatası:', err);
+        const TikTokLiveConnection = TikTokModule.TikTokLiveConnection;
+        const WebcastEvent = TikTokModule.WebcastEvent;
+
+        if (typeof TikTokLiveConnection !== "function") {
+            throw new Error(
+                "TikTokLiveConnection constructor bulunamadı."
+            );
+        }
+
+        const tiktok = new TikTokLiveConnection(TIKTOK_USERNAME);
+
+        console.log(`TikTok bağlantısı başlatılıyor: @${TIKTOK_USERNAME}`);
+
+        tiktok.on(WebcastEvent.CHAT, (data) => {
+            const username = data.user?.uniqueId || "unknown";
+            const comment = data.comment || "";
+
+            console.log(`[CHAT] ${username}: ${comment}`);
+
+            messageQueue.push({
+                type: "chat",
+                tiktokUser: username,
+                comment: comment
+            });
         });
 
-    tiktok.on(WebcastEvent.CHAT, data => {
-        const username = data.user?.uniqueId || 'unknown';
-        const comment = data.comment || '';
+        tiktok.on(WebcastEvent.FOLLOW, (data) => {
+            const username = data.user?.uniqueId || "unknown";
 
-        console.log(`[CHAT] ${username}: ${comment}`);
+            console.log(`[FOLLOW] ${username}`);
 
-        messageQueue.push({
-            type: 'chat',
-            tiktokUser: username,
-            comment: comment
-        });
-    });
-
-    tiktok.on(WebcastEvent.FOLLOW, data => {
-        const username = data.user?.uniqueId || 'unknown';
-
-        console.log(`[FOLLOW] ${username} takip etti`);
-
-        messageQueue.push({
-            type: 'follow',
-            tiktokUser: username
-        });
-    });
-
-    tiktok.on(WebcastEvent.LIKE, data => {
-        const username = data.user?.uniqueId || 'unknown';
-
-        console.log(`[LIKE] ${username} liked`);
-    });
-
-    app.get('/tiktok-events', (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-
-        res.json({
-            messages: messageQueue
+            messageQueue.push({
+                type: "follow",
+                tiktokUser: username
+            });
         });
 
-        messageQueue = [];
-    });
+        tiktok.on(WebcastEvent.LIKE, (data) => {
+            const username = data.user?.uniqueId || "unknown";
 
-    app.listen(PORT, () => {
-        console.log(`Bridge sunucusu: http://localhost:${PORT}`);
-        console.log(`TikTok: @${TIKTOK_USERNAME}`);
-        console.log('TikTok Live bekleniyor...');
+            console.log(`[LIKE] ${username}`);
+        });
+
+        await tiktok.connect();
+
+        console.log("=================================");
+        console.log("TikTok LIVE bağlantısı başarılı!");
+        console.log("Room ID:", tiktok.roomId);
+        console.log("=================================");
+
+    } catch (error) {
+        console.error("TikTok bağlantı hatası:", error);
+    }
+}
+
+app.get("/", (req, res) => {
+    res.json({
+        status: "online",
+        tiktok: TIKTOK_USERNAME,
+        queueSize: messageQueue.length
     });
-})();
+});
+
+app.get("/tiktok-events", (req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    const events = messageQueue;
+
+    messageQueue = [];
+
+    res.json({
+        messages: events
+    });
+});
+
+app.listen(PORT, () => {
+    console.log(`Bridge sunucusu ${PORT} portunda çalışıyor.`);
+    console.log(`TikTok: @${TIKTOK_USERNAME}`);
+
+    startTikTok();
+});
